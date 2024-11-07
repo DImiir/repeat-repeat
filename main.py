@@ -6,15 +6,19 @@ from aiogram.types import Message, CallbackQuery
 from aiogram import F
 
 from database.models import UserORM, DictionaryORM
-from keyboards import keyboard_menu, keyboard_dict
+from keyboards import keyboard_menu, keyboard_dict, inline_language_keyboard_maker
 from database import db_session
 
-BOT_TOKEN = 'BOT_TOKEN'
+import languages
+
+BOT_TOKEN = '7855547856:AAEUnPMKytMhnrSnwYFj98i1q3lTyCdPkbI'
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
-class AddWordFSM(StatesGroup):
+class FSMMachine(StatesGroup):
+    dict = State()
+    choose = State()
     add = State()
 
 
@@ -32,7 +36,7 @@ async def process_start_command(message: Message):
         session.commit()
     await message.answer('''
 Привет !!!
-Я бот-помощник для изучения тобой иностранных языков.
+Я бот для изучения иностранных языков.
 Моя задача - помочь запомнить слова и их перевод.
 Если что-то непонятно -> /help
 ''', reply_markup=keyboard_menu)
@@ -63,19 +67,60 @@ async def open_dictionary_command(message: Message):
 ''', reply_markup=keyboard_dict)
 
 
-@dp.callback_query(F.data == 'add_word')
-async def add_word_to_the_dictionary_command(callback: CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == 'choose_language')
+async def choose_language_dictionary_command(callback: CallbackQuery, state: FSMContext):
+    amount = round(len(languages.items) // 10)
+
+    await callback.message.edit_text('''
+Какой язык ?
+''', reply_markup=inline_language_keyboard_maker(languages.items[:10], 1, amount))
+    await state.set_state(FSMMachine.choose)
+
+
+@dp.callback_query(StateFilter(FSMMachine.choose), F.data.startswith('next_page_lang'))
+async def next_page_lang_command(callback: CallbackQuery):
+    amount = round(len(languages.items) // 10)
+
+    page = int(callback.data.lstrip('next_page_lang'))
+
+    if page * 10 >= len(languages.items):
+        items = languages.items[page * 10: len(languages.items)]
+    else:
+        items = languages.items[page * 10: (page + 1) * 10]
+
+    await callback.message.edit_text('''
+Какой язык ?
+''', reply_markup=inline_language_keyboard_maker(items, page + 1, amount))
+
+
+@dp.callback_query(StateFilter(FSMMachine.choose), F.data.startswith('previous_page_lang'))
+async def next_page_lang_command(callback: CallbackQuery):
+    amount = round(len(languages.items) // 10)
+
+    page = int(callback.data.lstrip('previous_page_lang'))
+
+    items = languages.items[(page - 2) * 10: (page - 1) * 10]
+
+    await callback.message.edit_text('''
+Какой язык ?
+''', reply_markup=inline_language_keyboard_maker(items, page - 1, amount))
+
+
+@dp.callback_query(StateFilter(FSMMachine.choose), F.data.startswith('language_'))
+async def choose_language_dictionary_command(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(language=callback.data.split('language_')[1])
     await callback.message.edit_text('''
 Что за слово ?
 ''')
-    await state.set_state(AddWordFSM.add)
+    await state.set_state(FSMMachine.add)
 
 
-@dp.message(StateFilter(AddWordFSM.add), F.text)
+@dp.message(StateFilter(FSMMachine.add), F.text)
 async def word_is_added_to_the_dictionary(message: Message, state: FSMContext):
+    lang = await state.get_data()
     session = db_session.create_session()
     user = session.query(UserORM).filter(UserORM.tg_id == message.model_dump()['from_user']['id']).one()
-    language = 'английский'
+    language = lang['language']
     word = message.text
     translated_word = word
     data = DictionaryORM(
@@ -88,7 +133,7 @@ async def word_is_added_to_the_dictionary(message: Message, state: FSMContext):
     session.add(user)
     session.commit()
     await message.answer('''
-Ваше слово занесено в словарь для английского языка    
+Ваше слово занесено в словарь    
 ''', reply_markup=keyboard_menu)
     await state.clear()
 

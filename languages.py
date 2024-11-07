@@ -1,0 +1,10 @@
+items = [('English', 'en'), ('Deutsch', 'ge'), ('Français', 'fr'),
+             ('English1', 'en'), ('Deutsch1', 'ge'), ('Français1', 'fr'),
+             ('English2', 'en'), ('Deutsch2', 'ge'), ('Français2', 'fr'),
+             ('English3', 'en'), ('Deutsch3', 'ge'), ('Français3', 'fr'),
+             ('English4', 'en'), ('Deutsch4', 'ge'), ('Français4', 'fr'),
+             ('English5', 'en'), ('Deutsch5', 'ge'), ('Français5', 'fr'),
+             ('English6', 'en'), ('Deutsch6', 'ge'), ('Français6', 'fr'),
+             ('English7', 'en'), ('Deutsch7', 'ge'), ('Français7', 'fr'),
+             ('English8', 'en'), ('Deutsch8', 'ge'), ('Français8', 'fr'),
+             ('English9', 'en'), ('Deutsch9', 'ge'), ('Français9', 'fr')]
