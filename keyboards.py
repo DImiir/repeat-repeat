@@ -17,17 +17,26 @@ def keyboard_maker(data: list[str], width: int, one_time: bool = False):
     return keyboard
 
 
-def inline_dictionary_keyboard_maker(items: list[str], page: int, amount: int):
+def inline_dictionary_keyboard_maker(items: list[str], page: int, amount: int, dict_or_test: bool):
     kb = InlineKeyboardBuilder()
+    prefix = 'dict' if dict_or_test else 'test'
 
     for item in items:
-        kb.row(InlineKeyboardButton(text=languages.lexicon[item], callback_data=f'dictionary_{item}'))
+        kb.row(InlineKeyboardButton(text=languages.lexicon[item], callback_data=f'{prefix}_{item}'))
 
-    buttons = [InlineKeyboardButton(text='<-', callback_data='previous'),
-               InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page'),
-               InlineKeyboardButton(text='->', callback_data='next'),
-               InlineKeyboardButton(text='Добавить слово', callback_data='choose_language')]
-    kb.row(*buttons, width=3)
+    if page == 1:
+        kb.row(*[InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page'),
+                 InlineKeyboardButton(text='->', callback_data=f'next_page_{prefix}{page}')])
+    elif page == amount:
+        kb.row(*[InlineKeyboardButton(text='<-', callback_data=f'previous_page_{prefix}{page}'),
+                 InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page')])
+    else:
+        kb.row(*[InlineKeyboardButton(text='<-', callback_data=f'previous_page_{prefix}{page}'),
+                 InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page'),
+                 InlineKeyboardButton(text='->', callback_data=f'next_page_{prefix}{page}')])
+
+    if dict_or_test:
+        kb.row(InlineKeyboardButton(text='Добавить слово', callback_data='choose_language'))
 
     return kb.as_markup()
 
@@ -40,14 +49,14 @@ def inline_language_keyboard_maker(items: list[tuple], page: int, amount: int):
 
     if page == 1:
         kb.row(*[InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page'),
-                 InlineKeyboardButton(text='->', callback_data=f'next_page_lang{page}')], width=2)
+                 InlineKeyboardButton(text='->', callback_data=f'next_page_lang{page}')])
     elif page == amount:
         kb.row(*[InlineKeyboardButton(text='<-', callback_data=f'previous_page_lang{page}'),
-                 InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page')], width=2)
+                 InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page')])
     else:
         kb.row(*[InlineKeyboardButton(text='<-', callback_data=f'previous_page_lang{page}'),
                  InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page'),
-                 InlineKeyboardButton(text='->', callback_data=f'next_page_lang{page}')], width=3)
+                 InlineKeyboardButton(text='->', callback_data=f'next_page_lang{page}')])
 
     return kb.as_markup()
 
@@ -71,6 +80,14 @@ def inline_words_keyboard_maker(lang: str, page: int, amount: int):
                  InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page'),
                  InlineKeyboardButton(text='->', callback_data=f'next_page_words_{lang}_{page}')])
     kb.row(InlineKeyboardButton(text='Добавить слово', callback_data='choose_language'))
+    return kb.as_markup()
+
+
+def inline_tests_keyboard_maker():
+    kb = InlineKeyboardBuilder()
+    kb.row(*[InlineKeyboardButton(text='Индивидуальный', callback_data='individual_test'),
+             InlineKeyboardButton(text='Системный', callback_data='system_test'),
+             InlineKeyboardButton(text='По картинкам', callback_data='picture_test')], width=1)
     return kb.as_markup()
 
 

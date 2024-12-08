@@ -8,7 +8,7 @@ from aiogram.filters import BaseFilter
 
 from database.models import UserORM, DictionaryORM
 from keyboards import (keyboard_menu, inline_language_keyboard_maker, inline_dictionary_keyboard_maker,
-                       new_dictionary, inline_words_keyboard_maker)
+                       new_dictionary, inline_words_keyboard_maker, inline_tests_keyboard_maker)
 from database import db_session
 
 import languages
@@ -28,6 +28,8 @@ class FSMinput(StatesGroup):
     add_word = State()
     choose_lang = State()
     real_add_word = State()
+    start_test = State()
+    chose_lang = State()
 
 
 special_symbols = '''.,:;!?-–"«»'‘’“”()[]{}...+-=*/<>≤≥≠≈∞√$€₽£¥&&||&|^~<<>>*@#\|_/^%'''
@@ -121,7 +123,7 @@ async def choose_dictionary_command(message: Message, state: FSMContext):
         n = m if m < 10 else 10
         await message.answer(f'''
 Вот все Ваши словари.
-''', reply_markup=inline_dictionary_keyboard_maker(langs[:n], 1, amount))
+''', reply_markup=inline_dictionary_keyboard_maker(langs[:n], 1, amount, True))
         await state.set_state(FSMinput.choose_dict)
     else:
         await message.answer(f'''
@@ -130,11 +132,62 @@ async def choose_dictionary_command(message: Message, state: FSMContext):
         await state.set_state(FSMinput.add_word)
 
 
-@dp.callback_query(F.data.startswith('dictionary_'), StateFilter(FSMinput.choose_dict))
+@dp.callback_query(F.data.startswith('next_page_test'), StateFilter(FSMinput.choose_dict))
+@dp.callback_query(F.data.startswith('next_page_dict'), StateFilter(FSMinput.choose_dict))
+async def previous_page_dict_command(callback: CallbackQuery):
+    if F.data.startswith('next_page_test'):
+        page = int(callback.data.lstrip('next_page_test')[-1])
+        dict_or_test = False
+        text = 'Выберите язык:'
+    else:
+        page = int(callback.data.lstrip('next_page_dict')[-1])
+        dict_or_test = True
+        text = 'Вот все Ваши словари.'
+
+    session = db_session.create_session()
+    data = session.query(UserORM).filter(UserORM.tg_id == callback.model_dump()['from_user']['id']).one()
+    langs = sorted(list({i.language for i in data.dictionary}))
+    m = len(langs)
+    amount = ceil(m / 10)
+
+    if page * 10 < m:
+        final_langs = langs[page * 10:]
+    else:
+        final_langs = langs[page * 10: (page + 1) * 10]
+
+    await callback.message.edit_text(f'''
+{text}
+''', reply_markup=inline_dictionary_keyboard_maker(final_langs, page + 1, amount, dict_or_test))
+
+
+@dp.callback_query(F.data.startswith('previous_page_test'), StateFilter(FSMinput.choose_dict))
+@dp.callback_query(F.data.startswith('previous_page_dict'), StateFilter(FSMinput.choose_dict))
+async def previous_page_dict_command(callback: CallbackQuery):
+    if F.data.startswith('previous_page_test'):
+        page = int(callback.data.lstrip('previous_page_test')[-1])
+        dict_or_test = False
+        text = 'Выберите язык:'
+    else:
+        page = int(callback.data.lstrip('previous_page_dict')[-1])
+        dict_or_test = True
+        text = 'Вот все Ваши словари.'
+
+    session = db_session.create_session()
+    data = session.query(UserORM).filter(UserORM.tg_id == callback.model_dump()['from_user']['id']).one()
+    langs = sorted(list({i.language for i in data.dictionary}))
+    final_langs = langs[(page - 2) * 10: (page - 1) * 10]
+    amount = ceil(len(langs) / 10)
+
+    await callback.message.edit_text(f'''
+{text}
+''', reply_markup=inline_dictionary_keyboard_maker(final_langs, page - 1, amount, dict_or_test))
+
+
+@dp.callback_query(F.data.startswith('dict_'), StateFilter(FSMinput.choose_dict))
 async def open_dictionary_command(callback: CallbackQuery, state: FSMContext):
     session = db_session.create_session()
     data = session.query(UserORM).filter(UserORM.tg_id == callback.model_dump()['from_user']['id']).one()
-    lang = callback.data.lstrip('dictionary_')
+    lang = callback.data.lstrip('dict_')
     text = [(i.word, i.translated_word) for i in data.dictionary if i.language == lang]
     m = len(text)
     amount = ceil(m / 10)
@@ -154,9 +207,10 @@ async def previous_page_words_command(callback: CallbackQuery):
     session = db_session.create_session()
     data = session.query(UserORM).filter(UserORM.tg_id == callback.model_dump()['from_user']['id']).one()
     text = [(i.word, i.translated_word) for i in data.dictionary if i.language == lang]
-    amount = ceil(len(text) / 10)
+    m = len(text)
+    amount = ceil(m / 10)
 
-    if page * 10 < len(text):
+    if page * 10 < m:
         final_text = '\n'.join([f'{i[0]} - {i[1]}' for i in text[page * 10:]])
     else:
         final_text = '\n'.join([f'{i[0]} - {i[1]}' for i in text[page * 10: (page + 1) * 10]])
@@ -269,11 +323,32 @@ async def it_is_not_word(message: Message):
 
 
 @dp.message(Command(commands=["test"]), StateFilter(default_state), StateFilter(default_state))
-@dp.message(F.text.in_(['Начать проверку 🎓', 'начать проверку', 'Начать проверку']))
-async def start_test_command(message: Message):
+@dp.message(F.text.in_(['Начать тестирование 🎓', 'начать тестирование', 'Начать тестирование']))
+async def start_test_command(message: Message, state: FSMContext):
     await message.answer('''
-По какому языку Вы хотите начать тестирование ?    
-''')
+Выберите тип тестирования:
+''', reply_markup=inline_tests_keyboard_maker())
+    await state.set_state(FSMinput.start_test)
+
+
+@dp.callback_query(F.data == 'individual_test', StateFilter(FSMinput.start_test))
+async def chose_individual_test_type(callback: CallbackQuery, state: FSMContext):
+    session = db_session.create_session()
+    data = session.query(UserORM).filter(UserORM.tg_id == callback.model_dump()['from_user']['id']).one()
+    langs = sorted(list({i.language for i in data.dictionary}))
+    if langs:
+        m = len(langs)
+        amount = ceil(m / 10)
+        n = m if m < 10 else 10
+        await callback.message.edit_text(f'''
+Выберите язык:
+''', reply_markup=inline_dictionary_keyboard_maker(langs[:n], 1, amount, False))
+        await state.set_state(FSMinput.choose_dict)
+    else:
+        await callback.message.edit_text(f'''
+У Вас нет словарей, по которым можно составить тест.
+''', reply_markup=new_dictionary)
+        await state.set_state(FSMinput.add_word)
 
 
 if __name__ == '__main__':
