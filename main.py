@@ -80,7 +80,7 @@ async def process_start_command(message: Message):
     await message.answer('''
 Привет !!!
 Я бот для изучения иностранных языков.
-Моя задача - помочь запомнить слова и их перевод.
+Моя задача - помочь тебе в этом деле.
 Если что-то непонятно -> /help
 ''', reply_markup=keyboard_menu)
 
@@ -323,7 +323,7 @@ async def it_is_not_word(message: Message):
 
 
 @dp.message(Command(commands=["test"]), StateFilter(default_state), StateFilter(default_state))
-@dp.message(F.text.in_(['Начать тестирование 🎓', 'начать тестирование', 'Начать тестирование']))
+@dp.message(F.text.in_(['Пройти тест 🎓', 'пройти тест', 'Пройти тест']))
 async def start_test_command(message: Message, state: FSMContext):
     await message.answer('''
 Выберите тип тестирования:

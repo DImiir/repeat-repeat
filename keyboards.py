@@ -91,6 +91,6 @@ def inline_tests_keyboard_maker():
     return kb.as_markup()
 
 
-keyboard_menu = keyboard_maker(['Помощь ❓', 'Открыть словарь 📚', 'Начать тестирование 🎓'], 3)
+keyboard_menu = keyboard_maker(['Помощь ❓', 'Открыть словарь 📚', 'Пройти тест 🎓'], 3)
 
 new_dictionary = inline_make_dictionary()
