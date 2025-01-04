@@ -1,3 +1,5 @@
+from random import shuffle
+
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 import languages
@@ -85,12 +87,29 @@ def inline_words_keyboard_maker(lang: str, page: int, amount: int):
 
 def inline_tests_keyboard_maker():
     kb = InlineKeyboardBuilder()
-    kb.row(*[InlineKeyboardButton(text='Индивидуальный', callback_data='individual_test'),
-             InlineKeyboardButton(text='Системный', callback_data='system_test'),
-             InlineKeyboardButton(text='По картинкам', callback_data='picture_test')], width=1)
+    kb.row(*[InlineKeyboardButton(text='Словесный', callback_data='word_test'),
+             InlineKeyboardButton(text='Фразовый', callback_data='system_test'),
+             InlineKeyboardButton(text='По картинкам', callback_data='picture_test'),
+             InlineKeyboardButton(text='Аудио тест', callback_data='audio_test')], width=1)
     return kb.as_markup()
 
 
-keyboard_menu = keyboard_maker(['Помощь ❓', 'Открыть словарь 📚', 'Пройти тест 🎓'], 3)
+def inline_word_test_answer_keyboard_maker(variants: list[str], n: int):
+    kb = InlineKeyboardBuilder()
+    true_variant = variants[n]
+    variants.remove(true_variant)
+    shuffle(variants)
+    possible_answers = variants[:4]
+    possible_answers.append(true_variant)
+    shuffle(possible_answers)
+    for variant in possible_answers:
+        if variant == true_variant:
+            kb.row(InlineKeyboardButton(text=f'{variant}', callback_data='wordtest_true'))
+        else:
+            kb.row(InlineKeyboardButton(text=f'{variant}', callback_data='wordtest_false'))
+    return kb.as_markup()
+
+
+keyboard_menu = keyboard_maker(['Помощь ❓', 'Открыть словарь 📚', 'Пройти тест 🎓', 'Результаты '], 2)
 
 new_dictionary = inline_make_dictionary()

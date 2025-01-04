@@ -11,6 +11,7 @@ class UserORM(SqlAlchemyBase):
     username: Mapped[str]
 
     dictionary: Mapped[list["DictionaryORM"]] = relationship(back_populates="user")
+    statistics: Mapped[list["ResultsORM"]] = relationship(back_populates="user")
 
 
 class DictionaryORM(SqlAlchemyBase):
@@ -25,6 +26,17 @@ class DictionaryORM(SqlAlchemyBase):
     user: Mapped["UserORM"] = relationship(back_populates="dictionary")
 
 
+class ResultsORM(SqlAlchemyBase):
+    __tablename__ = 'results'
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    language: Mapped[str]
+    type_of_tests: Mapped[int]
+    result: Mapped[float]
+    number_of_attempts: Mapped[int]
+
+    user: Mapped["UserORM"] = relationship(back_populates="statistics")
 
 
 
