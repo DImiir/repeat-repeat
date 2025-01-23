@@ -2,7 +2,7 @@ from random import shuffle
 
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
-import languages
+import lexicon
 
 
 def keyboard_maker(data: list[str], width: int, one_time: bool = False):
@@ -24,7 +24,7 @@ def inline_dictionary_keyboard_maker(items: list[str], page: int, amount: int, d
     prefix = 'dict' if dict_or_test else 'test'
 
     for item in items:
-        kb.row(InlineKeyboardButton(text=languages.lexicon[item], callback_data=f'{prefix}_{item}'))
+        kb.row(InlineKeyboardButton(text=lexicon.languages[item], callback_data=f'{prefix}_{item}'))
 
     if amount == 1:
         kb.row(*[InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page')])
@@ -51,7 +51,7 @@ def inline_language_keyboard_maker(items: list, page: int, amount: int):
     kb = InlineKeyboardBuilder()
 
     for i in items:
-        kb.row(InlineKeyboardButton(text=f'{languages.lexicon[i]}', callback_data=f'language_{i}'), width=1)
+        kb.row(InlineKeyboardButton(text=f'{lexicon.languages[i]}', callback_data=f'language_{i}'), width=1)
 
     if amount == 1:
         kb.row(*[InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page')])
@@ -78,7 +78,7 @@ def inline_make_dictionary():
     return kb.as_markup()
 
 
-def inline_words_keyboard_maker(words: list[tuple], page: int, amount: int):
+def inline_words_keyboard_maker(words: list[tuple], page: int, amount: int, lang=''):
     kb = InlineKeyboardBuilder()
 
     final_words = words[(page - 1) * 10:page * 10]
@@ -98,7 +98,7 @@ def inline_words_keyboard_maker(words: list[tuple], page: int, amount: int):
         kb.row(*[InlineKeyboardButton(text='<-', callback_data=f'previous_page_words'),
                  InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page'),
                  InlineKeyboardButton(text='->', callback_data=f'next_page_words')])
-    kb.row(InlineKeyboardButton(text='Добавить слово', callback_data='choose_language'))
+    kb.row(InlineKeyboardButton(text='Добавить слово', callback_data=f'choose_language_{lang}'))
     kb.row(InlineKeyboardButton(text='Отмена', callback_data='cancel_action'))
 
     return kb.as_markup()
@@ -113,19 +113,19 @@ def inline_word_keyboard_maker(word_id: int):
     return kb.as_markup()
 
 
-def inline_tests_keyboard_maker():
+def inline_tests_keyboard_maker(lang: str):
     kb = InlineKeyboardBuilder()
-    kb.row(*[InlineKeyboardButton(text='Словесный', callback_data='word_test'),
-             InlineKeyboardButton(text='Фразовый', callback_data='system_test'),
-             InlineKeyboardButton(text='По картинкам', callback_data='picture_test'),
-             InlineKeyboardButton(text='Аудио тест', callback_data='audio_test')], width=1)
+    kb.row(*[InlineKeyboardButton(text='Словесный', callback_data=f'word_test_{lang}'),
+             InlineKeyboardButton(text='Фразовый', callback_data=f'phrase_test_{lang}'),
+             InlineKeyboardButton(text='По картинкам', callback_data=f'picture_test_{lang}'),
+             InlineKeyboardButton(text='Аудио тест', callback_data=f'audio_test_{lang}')], width=1)
 
     kb.row(InlineKeyboardButton(text='Отмена', callback_data='cancel_action'))
 
     return kb.as_markup()
 
 
-def inline_word_test_answer_keyboard_maker(variants: list[str], n: int):
+def inline_word_test_answer_keyboard_maker(variants: list[str], n: int, type: str):
     kb = InlineKeyboardBuilder()
     true_variant = variants[n]
     variants.remove(true_variant)
@@ -135,9 +135,17 @@ def inline_word_test_answer_keyboard_maker(variants: list[str], n: int):
     shuffle(possible_answers)
     for variant in possible_answers:
         if variant == true_variant:
-            kb.row(InlineKeyboardButton(text=f'{variant}', callback_data='wordtest_true'))
+            kb.row(InlineKeyboardButton(text=f'{variant}', callback_data=f'{type}_answer_true'))
         else:
-            kb.row(InlineKeyboardButton(text=f'{variant}', callback_data='wordtest_false'))
+            kb.row(InlineKeyboardButton(text=f'{variant}', callback_data=f'{type}_answer_false'))
+    return kb.as_markup()
+
+
+def inline_phrase_test_group_keyboard_maker(lang: str, groups: set):
+    kb = InlineKeyboardBuilder()
+    for i in groups:
+        kb.row(InlineKeyboardButton(text=lexicon.groups[i], callback_data=f'phrase_test_{i}_{lang}'))
+    kb.row(InlineKeyboardButton(text='Отмена', callback_data='cancel_action'))
     return kb.as_markup()
 
 
