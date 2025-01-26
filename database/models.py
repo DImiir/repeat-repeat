@@ -32,7 +32,7 @@ class ResultsORM(SqlAlchemyBase):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     language: Mapped[str]
-    type_of_tests: Mapped[int]
+    type_of_tests: Mapped[str]
     result: Mapped[float]
     number_of_attempts: Mapped[int]
 
@@ -44,6 +44,15 @@ class PhraseInfoORM(SqlAlchemyBase):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     phrase: Mapped[str]
+    group: Mapped[str]
+
+
+class PictureInfoORM(SqlAlchemyBase):
+    __tablename__ = 'pictures'
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    picture: Mapped[str]
+    what: Mapped[str]
     group: Mapped[str]
 
 

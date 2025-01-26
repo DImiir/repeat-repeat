@@ -19,9 +19,9 @@ def keyboard_maker(data: list[str], width: int, one_time: bool = False):
     return keyboard
 
 
-def inline_dictionary_keyboard_maker(items: list[str], page: int, amount: int, dict_or_test: bool):
+def inline_dictionary_keyboard_maker(items: list[str], page: int, amount: int, dict_or_test: str):
     kb = InlineKeyboardBuilder()
-    prefix = 'dict' if dict_or_test else 'test'
+    prefix = 'dict' if dict_or_test == 'dict' else f'{dict_or_test}_test'
 
     for item in items:
         kb.row(InlineKeyboardButton(text=lexicon.languages[item], callback_data=f'{prefix}_{item}'))
@@ -47,24 +47,26 @@ def inline_dictionary_keyboard_maker(items: list[str], page: int, amount: int, d
     return kb.as_markup()
 
 
-def inline_language_keyboard_maker(items: list, page: int, amount: int):
+def inline_language_keyboard_maker(items: list, page: int, amount: int, lang_or_test: str):
     kb = InlineKeyboardBuilder()
 
+    prefix = 'lang' if lang_or_test == 'lang' else f'{lang_or_test}_test'
+
     for i in items:
-        kb.row(InlineKeyboardButton(text=f'{lexicon.languages[i]}', callback_data=f'language_{i}'), width=1)
+        kb.row(InlineKeyboardButton(text=f'{lexicon.languages[i]}', callback_data=f'{prefix}_{i}'), width=1)
 
     if amount == 1:
         kb.row(*[InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page')])
     elif page == 1:
         kb.row(*[InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page'),
-                 InlineKeyboardButton(text='->', callback_data=f'next_page_lang{page}')])
+                 InlineKeyboardButton(text='->', callback_data=f'next_page_{prefix}_{page}')])
     elif page == amount:
-        kb.row(*[InlineKeyboardButton(text='<-', callback_data=f'previous_page_lang{page}'),
+        kb.row(*[InlineKeyboardButton(text='<-', callback_data=f'previous_page_{prefix}_{page}'),
                  InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page')])
     else:
-        kb.row(*[InlineKeyboardButton(text='<-', callback_data=f'previous_page_lang{page}'),
+        kb.row(*[InlineKeyboardButton(text='<-', callback_data=f'previous_page_{prefix}_{page}'),
                  InlineKeyboardButton(text=f'{page}/{amount}', callback_data='page'),
-                 InlineKeyboardButton(text='->', callback_data=f'next_page_lang{page}')])
+                 InlineKeyboardButton(text='->', callback_data=f'next_page_{prefix}_{page}')])
 
     kb.row(InlineKeyboardButton(text='Отмена', callback_data='cancel_action'))
 
@@ -113,12 +115,12 @@ def inline_word_keyboard_maker(word_id: int):
     return kb.as_markup()
 
 
-def inline_tests_keyboard_maker(lang: str):
+def inline_tests_keyboard_maker():
     kb = InlineKeyboardBuilder()
-    kb.row(*[InlineKeyboardButton(text='Словесный', callback_data=f'word_test_{lang}'),
-             InlineKeyboardButton(text='Фразовый', callback_data=f'phrase_test_{lang}'),
-             InlineKeyboardButton(text='По картинкам', callback_data=f'picture_test_{lang}'),
-             InlineKeyboardButton(text='Аудио тест', callback_data=f'audio_test_{lang}')], width=1)
+    kb.row(*[InlineKeyboardButton(text='Словесный', callback_data=f'word_test'),
+             InlineKeyboardButton(text='Фразовый', callback_data=f'phrase_test'),
+             InlineKeyboardButton(text='По картинкам', callback_data=f'picture_test'),
+             InlineKeyboardButton(text='Аудио тест', callback_data=f'audio_test')], width=1)
 
     kb.row(InlineKeyboardButton(text='Отмена', callback_data='cancel_action'))
 
@@ -141,10 +143,17 @@ def inline_word_test_answer_keyboard_maker(variants: list[str], n: int, type: st
     return kb.as_markup()
 
 
-def inline_phrase_test_group_keyboard_maker(lang: str, groups: set):
+def inline_phrase_or_picture_test_group_keyboard_maker(lang: str, groups: set, phrase_or_picture: bool):
     kb = InlineKeyboardBuilder()
-    for i in groups:
-        kb.row(InlineKeyboardButton(text=lexicon.groups[i], callback_data=f'phrase_test_{i}_{lang}'))
+    if phrase_or_picture:
+        prefix = 'phrase'
+        lexgroups = lexicon.phrase_groups
+    else:
+        prefix = 'picture'
+        lexgroups = lexicon.pictures_groups
+
+    for i in sorted(groups):
+        kb.row(InlineKeyboardButton(text=lexgroups[i], callback_data=f'{prefix}_test_{i}_{lang}'))
     kb.row(InlineKeyboardButton(text='Отмена', callback_data='cancel_action'))
     return kb.as_markup()
 
