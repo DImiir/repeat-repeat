@@ -3,11 +3,15 @@ import re
 from random import shuffle
 from math import ceil
 
+import aiofiles
 import requests
+from aiogram.client.session import aiohttp
 
 from pydub import AudioSegment
 import numpy as np
 from scipy.signal import correlate
+from Levenshtein import distance as levenshtein_distance
+import speech_recognition as sr
 
 from aiogram import Bot, Dispatcher
 from aiogram import F
@@ -24,14 +28,12 @@ from database.models import UserORM, DictionaryORM, ResultsORM, PhraseInfoORM, P
 from keyboards import (keyboard_menu, inline_language_keyboard_maker, inline_dictionary_keyboard_maker,
                        new_dictionary, inline_words_keyboard_maker, inline_tests_keyboard_maker,
                        inline_word_test_answer_keyboard_maker, inline_word_keyboard_maker,
-                       inline_phrase_or_picture_test_group_keyboard_maker)
+                       inline_phrase_audio_picture_test_group_keyboard_maker)
 
 BOT_TOKEN = ''
 API_key = ''
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
-TEXT_FOR_COMPARISON = "Привеет"
 
 
 def translate(text, target_language):
@@ -52,6 +54,12 @@ def translate(text, target_language):
     return response.json()['translations'][0]['text']
 
 
+def text_to_audio(text: str, lang: str, file_name: str = "audio.mp3") -> str:
+    tts = gTTS(text, lang=lang)
+    tts.save(file_name)
+    return file_name
+
+
 class FSMinput(StatesGroup):
     choose_dict = State()
     word = State()
@@ -59,10 +67,8 @@ class FSMinput(StatesGroup):
     real_add_word = State()
     result_lang = State()
     start_test = State()
-    chose_lang = State()
-    word_test = State()
-
-    test_test = State()
+    test = State()
+    audio_test = State()
 
 
 special_symbols = '''.,:;!?-–"«»'‘’“”()[]{}...+-=*/<>≤≥≠≈∞√$€₽£¥&&||&|^~<<>>*@#\|_/^%'''
@@ -95,6 +101,33 @@ def compare_audio(file1, file2):
     correlation_score = np.max(correlation) / (np.linalg.norm(samples1) * np.linalg.norm(samples2))
 
     return correlation_score
+
+
+TEMP_PATH = "temp_audio"
+os.makedirs(TEMP_PATH, exist_ok=True)
+
+THRESHOLD = 0.1  # Допустимый процент ошибок при сравнении текстов
+
+
+def normalize_text(text):
+    return re.sub(r'[^\w\s]', '', text).strip().lower()
+
+
+def preprocess_audio(input_path, output_path):
+    audio = AudioSegment.from_file(input_path)
+    audio = audio.set_frame_rate(16000).set_channels(1)
+    if len(audio) > 5000:
+        audio = audio[:5000]
+    audio.export(output_path, format="wav")
+
+
+def is_similar(text1, text2, threshold=THRESHOLD):
+    text1, text2 = normalize_text(text1), normalize_text(text2)
+    max_len = max(len(text1), len(text2))
+    if max_len == 0:
+        return False
+    similarity = levenshtein_distance(text1, text2) / max_len
+    return similarity <= threshold
 
 
 def contains_emoji(text):
@@ -170,7 +203,7 @@ async def user_help_command(message: Message):
 @dp.message(Command(commands='cancel'), StateFilter(default_state))
 async def process_cancel_command(message: Message):
     await message.answer(text='''
-Это не тот случай, чтобы применить эту функцию
+Это не тот случай, чтобы применить эту команду
 ''')
 
 
@@ -184,7 +217,8 @@ async def process_cancel_command_state(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == 'cancel_action', ~StateFilter(default_state))
 async def process_cancel_command_state(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text('''
+    await callback.message.delete()
+    await callback.message.answer('''
 Отмена
 ''')
     await callback.answer(reply_markup=keyboard_menu)
@@ -291,7 +325,9 @@ async def open_dictionary_command(callback: CallbackQuery, state: FSMContext):
 async def previous_page_words_command(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
 
-    await callback.message.edit_text(text=data['text'], reply_markup=inline_words_keyboard_maker(data['words'], data['page'] + 1, data['amount']))
+    await callback.message.edit_text(text=data['text'],
+                                     reply_markup=inline_words_keyboard_maker(data['words'], data['page'] + 1,
+                                                                              data['amount']))
 
     await state.update_data(page=data['page'] + 1)
 
@@ -300,7 +336,9 @@ async def previous_page_words_command(callback: CallbackQuery, state: FSMContext
 async def previous_page_words_command(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
 
-    await callback.message.edit_text(text=data['text'], reply_markup=inline_words_keyboard_maker(data['words'], data['page'] - 1, data['amount']))
+    await callback.message.edit_text(text=data['text'],
+                                     reply_markup=inline_words_keyboard_maker(data['words'], data['page'] - 1,
+                                                                              data['amount']))
 
     await state.update_data(page=data['page'] - 1)
 
@@ -312,10 +350,14 @@ async def open_word_card(callback: CallbackQuery):
     session = db_session.create_session()
     data = session.query(DictionaryORM).filter(DictionaryORM.id == word_id).one()
 
-    await callback.message.edit_text(f'''
+    audio_file = text_to_audio(data.translated_word, data.language)
+
+    await callback.message.delete()
+    await callback.message.answer_audio(audio=FSInputFile("audio.mp3"), caption=f'''
 {data.word} - {data.translated_word}
 ''', reply_markup=inline_word_keyboard_maker(data.id))
     session.close()
+    os.remove(audio_file)
 
 
 @dp.callback_query(F.data.startswith('delete_word'), StateFilter(FSMinput.word))
@@ -328,7 +370,8 @@ async def delete_word(callback: CallbackQuery, state: FSMContext):
     session.delete(data)
     session.commit()
 
-    await callback.message.edit_text('''
+    await callback.message.delete()
+    await callback.message.answer('''
 Слово удалено.
 ''')
     await callback.answer(reply_markup=keyboard_menu)
@@ -355,8 +398,9 @@ async def next_page_lang_command(callback: CallbackQuery):
 
     lst = callback.data.split('_')
     page = int(lst[-1])
-    type = lst[-3]
-
+    type = lst[2] + '_' + lst[3]
+    if 'audio' in callback.data:
+        type += '_' + lst[4]
     if page * 10 >= len(lexicon.languages.keys()):
         items = list(lexicon.languages.keys())[page * 10:]
     else:
@@ -376,8 +420,9 @@ async def previous_page_lang_command(callback: CallbackQuery):
 
     lst = callback.data.split('_')
     page = int(lst[-1])
-    type = lst[-3]
-
+    type = lst[2] + '_' + lst[3]
+    if 'audio' in callback.data:
+        type += '_' + lst[4]
     items = list(lexicon.languages.keys())[(page - 2) * 10: (page - 1) * 10]
 
     await callback.message.edit_text('''
@@ -388,7 +433,7 @@ async def previous_page_lang_command(callback: CallbackQuery):
 @dp.callback_query(F.data.startswith('choose_language_'), StateFilter(FSMinput.word))
 @dp.callback_query(F.data.startswith('lang_'), StateFilter(FSMinput.choose_lang))
 async def choose_language_dictionary_command(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(language=callback.data.split('_')[1])
+    await state.update_data(language=callback.data.split('_')[-1])
     await callback.message.edit_text('''
 Что за слово ?
 ''')
@@ -496,9 +541,9 @@ async def check_results_of_tests(callback: CallbackQuery, state: FSMContext):
     text = ''
     for i in grades:
         if i[0] == 1:
-            text += f'Словесный - {i[1]:.2f}\n'
+            text += f'Индивидуальный - {i[1]:.2f}\n'
         if i[0] == 2:
-            text += f'Фразовый - {i[1]:.2f}\n'
+            text += f'Системный - {i[1]:.2f}\n'
         if i[0] == 3:
             text += f'По картинкам - {i[1]:.2f}\n'
         if i[0] == 4:
@@ -528,7 +573,7 @@ async def choose_language_for_word_test_command(callback: CallbackQuery, state: 
     data = session.query(UserORM).filter(UserORM.tg_id == callback.model_dump()['from_user']['id']).one()
     all_langs = [i.language for i in data.dictionary]
     langs = sorted({i for i in all_langs if all_langs.count(i) >= 10})
-    type = callback.data.split('_')[0]
+    type = callback.data
     if langs:
         m = len(langs)
         amount = ceil(m / 10)
@@ -545,13 +590,35 @@ async def choose_language_for_word_test_command(callback: CallbackQuery, state: 
     session.close()
 
 
-@dp.callback_query(F.data.in_(['phrase_test', 'picture_test', 'audio_test']), StateFilter(FSMinput.start_test))
+@dp.callback_query(F.data.startswith('audio_test_0'), StateFilter(FSMinput.test))
+async def choose_individual_audio_test_type(callback: CallbackQuery, state: FSMContext):
+    session = db_session.create_session()
+    data = session.query(UserORM).filter(UserORM.tg_id == callback.model_dump()['from_user']['id']).one()
+    all_langs = [i.language for i in data.dictionary]
+    langs = sorted({i for i in all_langs if all_langs.count(i) >= 10})
+    if langs:
+        m = len(langs)
+        amount = ceil(m / 10)
+        n = m if m < 10 else 10
+        await callback.message.edit_text(f'''
+Выберите язык:
+''', reply_markup=inline_dictionary_keyboard_maker(langs[:n], 1, amount, 'audio_test_0'))
+        await state.set_state(FSMinput.audio_test)
+    else:
+        await callback.message.edit_text(f'''
+У Вас нет словарей, по которым можно составить тест.
+''', reply_markup=new_dictionary)
+        await state.set_state(FSMinput.word)
+
+
+@dp.callback_query(F.data.startswith('audio_test'), StateFilter(FSMinput.test))
+@dp.callback_query(F.data.in_(['phrase_test', 'picture_test']), StateFilter(FSMinput.start_test))
 async def choose_language_for_other_tests_command(callback: CallbackQuery, state: FSMContext):
     langs = list(lexicon.languages.keys())
     m = len(langs)
     amount = ceil(m / 10)
     n = m if m < 10 else 10
-    type = callback.data.split('_')[0]
+    type = callback.data
     await callback.message.edit_text('''
 Выберите язык:
 ''', reply_markup=inline_dictionary_keyboard_maker(langs[:n], 1, amount, type))
@@ -560,30 +627,36 @@ async def choose_language_for_other_tests_command(callback: CallbackQuery, state
 
 @dp.callback_query(F.data.startswith('picture_test'), StateFilter(FSMinput.choose_dict))
 @dp.callback_query(F.data.startswith('phrase_test'), StateFilter(FSMinput.choose_dict))
+@dp.callback_query(F.data == 'audio_test', StateFilter(FSMinput.start_test))
 async def word_test_running(callback: CallbackQuery, state: FSMContext):
     lst = callback.data.split('_')
     language = lst[-1]
     type = lst[0]
     session = db_session.create_session()
     data, text = [], ''
+    groups = set()
     if type == 'phrase':
         data = session.query(PhraseInfoORM).all()
         text = 'фраз'
     elif type == 'picture':
         data = session.query(PictureInfoORM).all()
         text = 'картинок'
+    elif type == 'audio':
+        data = session.query(PhraseInfoORM).all()
+        text = 'аудио'
+        groups.add('0')
     session.close()
-    groups = set()
+
     for i in data:
         groups.add(i.group)
+
     await callback.message.edit_text(f'''
 Выберите группу {text}:
-''', reply_markup=inline_phrase_or_picture_test_group_keyboard_maker(language, groups,
-                                                                     True if type == 'phrase' else False))
-    await state.set_state(FSMinput.word_test)
+''', reply_markup=inline_phrase_audio_picture_test_group_keyboard_maker(language, groups, type))
+    await state.set_state(FSMinput.test)
 
 
-@dp.callback_query(F.data.startswith('picture_test'), StateFilter(FSMinput.word_test))
+@dp.callback_query(F.data.startswith('picture_test'), StateFilter(FSMinput.test))
 async def picture_test_running(callback: CallbackQuery, state: FSMContext):
     lst = callback.data.split('_')
     language = lst[-1]
@@ -598,12 +671,14 @@ async def picture_test_running(callback: CallbackQuery, state: FSMContext):
     photo_file = FSInputFile(info[0][-1])
     await callback.message.delete()
     await callback.message.answer(text='Что изображено на картинке ?')
-    await callback.message.answer_photo(photo=photo_file, reply_markup=inline_word_test_answer_keyboard_maker([i[1] for i in info], n, type))
-    await state.set_state(FSMinput.word_test)
+    await callback.message.answer_photo(photo=photo_file,
+                                        reply_markup=inline_word_test_answer_keyboard_maker([i[1] for i in info], n,
+                                                                                            type))
+    await state.set_state(FSMinput.test)
     await state.update_data(language=language, info=info, n=n, rating=rating)
 
 
-@dp.callback_query(F.data.startswith('phrase_test'), StateFilter(FSMinput.word_test))
+@dp.callback_query(F.data.startswith('phrase_test'), StateFilter(FSMinput.test))
 @dp.callback_query(F.data.startswith('word_test'), StateFilter(FSMinput.choose_dict))
 async def word_or_phrase_test_running(callback: CallbackQuery, state: FSMContext):
     lst = callback.data.split('_')
@@ -625,23 +700,23 @@ async def word_or_phrase_test_running(callback: CallbackQuery, state: FSMContext
 Как переводится это:
 {info[n][0]}
 ''', reply_markup=inline_word_test_answer_keyboard_maker([i[1] for i in info], n, type))
-    await state.set_state(FSMinput.word_test)
+    await state.set_state(FSMinput.test)
     await state.update_data(language=language, info=info, n=n, rating=rating)
     session.close()
 
 
-@dp.callback_query(F.data.startswith('picture_answer'), StateFilter(FSMinput.word_test))
-@dp.callback_query(F.data.startswith('phrase_answer'), StateFilter(FSMinput.word_test))
-@dp.callback_query(F.data.startswith('word_answer'), StateFilter(FSMinput.word_test))
+@dp.callback_query(F.data.startswith('picture_answer'), StateFilter(FSMinput.test))
+@dp.callback_query(F.data.startswith('phrase_answer'), StateFilter(FSMinput.test))
+@dp.callback_query(F.data.startswith('word_answer'), StateFilter(FSMinput.test))
 async def test_answering(callback: CallbackQuery, state: FSMContext):
     info = await state.get_data()
     info['n'] += 1
-    grade = calculate_grade(info['rating'])
     lst = callback.data.split('_')
     type = {'word': '1', 'phrase': '2', 'picture': '3'}[lst[0]]
 
     if lst[-1] == 'true':
         info['rating'] += 1
+    grade = calculate_grade(info['rating'])
 
     await state.update_data(n=info['n'], rating=info['rating'])
 
@@ -683,7 +758,8 @@ async def test_answering(callback: CallbackQuery, state: FSMContext):
     else:
         if type == '3':
             photo_file = InputMediaPhoto(media=FSInputFile(info['info'][info['n']][-1]))
-            await callback.message.edit_media(media=photo_file, reply_markup=inline_word_test_answer_keyboard_maker([i[1] for i in info['info']], info['n'], lst[0]))
+            await callback.message.edit_media(media=photo_file, reply_markup=inline_word_test_answer_keyboard_maker(
+                [i[1] for i in info['info']], info['n'], lst[0]))
         else:
             await callback.message.edit_text(f'''
 Как переводится это:
@@ -691,44 +767,141 @@ async def test_answering(callback: CallbackQuery, state: FSMContext):
 ''', reply_markup=inline_word_test_answer_keyboard_maker([i[1] for i in info['info']], info['n'], lst[0]))
 
 
-@dp.callback_query(F.data.startswith('audio_test'), StateFilter(FSMinput.start_test))
-async def choose_system_test_type(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text('''
-Введите текст для аудио:
+@dp.callback_query(F.data.startswith('audio_test'), StateFilter(FSMinput.choose_dict))
+async def choose_audio_test_type(callback: CallbackQuery, state: FSMContext):
+    lst = callback.data.split('_')
+    language = lst[-1]
+    session = db_session.create_session()
+    n, rating, info = 0, 0, []
+    data = session.query(PhraseInfoORM).filter(PhraseInfoORM.group == lst[-2]).all()
+    info = [(i.phrase, translate(i.phrase, language)) for i in data]
+    shuffle(info)
+    info = info[:10]
+    audio_file = text_to_audio(info[0][1], language)
+
+    await callback.message.delete()
+    await callback.message.answer_audio(audio=FSInputFile(audio_file), caption='''
+Повторите
 ''')
-    await state.set_state(FSMinput.test_test)
+    await state.set_state(FSMinput.audio_test)
+    await state.update_data(language=language, info=info, n=n, rating=rating)
+    os.remove(audio_file)
+    session.close()
 
 
-@dp.message(StateFilter(FSMinput.test_test), F.content_type.in_({'audio', 'voice'}))
-async def demo_audiotest(message: Message):
-    user_id = message.from_user.id
-    file_id = message.voice.file_id
+@dp.callback_query(F.data.startswith('audio_test_0'), StateFilter(FSMinput.audio_test))
+async def audio_test_0_before_answering(callback: CallbackQuery, state: FSMContext):
+    lst = callback.data.split('_')
+    language = lst[-1]
+    session = db_session.create_session()
+    n, rating, info = 0, 0, []
+    data = session.query(DictionaryORM).filter(DictionaryORM.language == language).all()
+    info = [(i.word, i.translated_word) for i in data]
+    shuffle(info)
+    info = info[:10]
+    audio_file = text_to_audio(info[0][1], language)
 
-    file_info = await bot.get_file(file_id)
-    file_path = file_info.file_path
-    user_audio_file = f"{user_id}_voice.ogg"
-    await bot.download_file(file_path, user_audio_file)
+    await callback.message.delete()
+    await callback.message.answer_audio(audio=FSInputFile(audio_file), caption=f'''
+Повторите. 
+Перевод: {info[0][0]}
+''')
+    await state.set_state(FSMinput.audio_test)
+    await state.update_data(language=language, info=info, n=n, rating=rating)
+    os.remove(audio_file)
+    session.close()
 
-    user_audio_wav = f"{user_id}_voice.wav"
-    AudioSegment.from_file(user_audio_file).export(user_audio_wav, format="wav")
 
-    system_audio_file = "system_audio.mp3"
-    tts = gTTS(TEXT_FOR_COMPARISON, lang='ru')
-    tts.save(system_audio_file)
+@dp.message(F.content_type.in_({'audio', 'voice'}), StateFilter(FSMinput.audio_test))
+async def audio_test_answering(message: Message, state: FSMContext):
+    info = await state.get_data()
+    rate = 0
 
-    system_audio_wav = "system_audio.wav"
-    AudioSegment.from_mp3(system_audio_file).export(system_audio_wav, format="wav")
+    recognizer = sr.Recognizer()
+    user_audio_path = os.path.join(TEMP_PATH, f"{message.message_id}.ogg")
+    processed_audio_path = os.path.splitext(user_audio_path)[0] + "_processed.wav"
 
-    try:
-        correlation_score = compare_audio(system_audio_wav, user_audio_wav)
-        await message.reply(f"Схожесть с синтезированным голосом: {correlation_score:.2f}")
-    except Exception as e:
-        await message.reply(f"Произошла ошибка при сравнении: {e}")
-    finally:
-        os.remove(user_audio_file)
-        os.remove(user_audio_wav)
-        os.remove(system_audio_file)
-        os.remove(system_audio_wav)
+    word = info['info'][info['n']][1]
+    audio_file = os.path.join(TEMP_PATH, f"{normalize_text(word)}.mp3")
+
+    tts = gTTS(word, lang=info['language'])
+    tts.save(audio_file)
+
+    info['n'] += 1
+
+    file_info = await bot.get_file(message.voice.file_id)
+    file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(file_url) as response:
+            if response.status == 200:
+                async with aiofiles.open(user_audio_path, 'wb') as f:
+                    await f.write(await response.read())
+            else:
+                raise Exception(f"Ошибка загрузки файла, статус: {response.status}")
+
+    preprocess_audio(user_audio_path, processed_audio_path)
+
+    with sr.AudioFile(processed_audio_path) as source:
+        audio = recognizer.record(source)
+        try:
+            user_text = recognizer.recognize_google(audio, language=lexicon.speaking_languages[lexicon.languages[info['language']]])
+        except sr.UnknownValueError:
+            await message.reply("""
+Аудиозапись не читаема. Требования к аудиозаписи:
+- Отсутствие шума
+- Длительность больше секунды, но меньше пяти
+- Разборчивая речь
+Попробуйте ещё раз.""")
+    original_word = word
+
+    if is_similar(user_text, original_word):
+        await message.reply("Совпадение найдено! Голосовое сообщение похоже на слово.")
+        rate = 1
+    else:
+        await message.reply(f"Не совпадает. Ты сказал: '{user_text}', а должно быть: '{original_word}'.")
+
+    for file_path in [user_audio_path, processed_audio_path]:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    info['rating'] += rate
+
+    await state.update_data(n=info['n'], rating=info['rating'])
+
+    if info['n'] == 10:
+        grade = calculate_grade(info['rating'])
+        await message.answer(f'''
+Ты прошёл тест.
+Твой результат: {info['rating']}/10
+Это {grade}
+''')
+
+        session = db_session.create_session()
+        user = session.query(UserORM).filter(UserORM.tg_id == message.model_dump()['from_user']['id']).one()
+        stat = [i for i in user.statistics if i.language == info['language'] and i.type_of_tests == '4']
+        if stat:
+            stat[0].number_of_attempts += 1
+            stat[0].result = (stat[0].result * (stat[0].number_of_attempts - 1) + grade) / stat[0].number_of_attempts
+        else:
+            data = ResultsORM(
+                user_id=user.id,
+                language=info['language'],
+                type_of_tests=4,
+                result=grade,
+                number_of_attempts=1
+            )
+            user.statistics.append(data)
+            session.add(user)
+        session.commit()
+        await state.clear()
+        session.close()
+    else:
+        audio_file = text_to_audio(info['info'][info['n']][1], info['language'])
+        await message.answer_audio(audio=FSInputFile(audio_file), caption=f'''
+Повторите.
+Перевод: {info['info'][info['n']][0]}
+''')
 
 
 if __name__ == '__main__':
