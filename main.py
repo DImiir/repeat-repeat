@@ -1,7 +1,9 @@
 import os
 import re
+from pathlib import Path
 from random import shuffle
 from math import ceil
+from shutil import rmtree
 
 import aiofiles
 import requests
@@ -106,7 +108,7 @@ def compare_audio(file1, file2):
 TEMP_PATH = "temp_audio"
 os.makedirs(TEMP_PATH, exist_ok=True)
 
-THRESHOLD = 0.1  # Допустимый процент ошибок при сравнении текстов
+THRESHOLD = 0.1
 
 
 def normalize_text(text):
@@ -394,18 +396,22 @@ async def choose_language_add_word_command(callback: CallbackQuery, state: FSMCo
 @dp.callback_query(F.data.startswith('next_page_audio_test'), StateFilter(FSMinput.choose_dict))
 @dp.callback_query(F.data.startswith('next_page_lang'), StateFilter(FSMinput.choose_lang))
 async def next_page_lang_command(callback: CallbackQuery):
-    amount = ceil(len(lexicon.languages.keys()) / 10)
-
     lst = callback.data.split('_')
     page = int(lst[-1])
     type = lst[2] + '_' + lst[3]
-    if 'audio' in callback.data:
+    if callback.data.startswith('next_page_audio_test'):
+        amount = ceil(len(lexicon.languages_for_audio.keys()) / 10)
         type += '_' + lst[4]
-    if page * 10 >= len(lexicon.languages.keys()):
-        items = list(lexicon.languages.keys())[page * 10:]
+        if page * 10 >= len(lexicon.languages.keys()):
+            items = list(lexicon.languages_for_audio.keys())[page * 10:]
+        else:
+            items = list(lexicon.languages_for_audio.keys())[page * 10: (page + 1) * 10]
     else:
-        items = list(lexicon.languages.keys())[page * 10: (page + 1) * 10]
-
+        amount = ceil(len(lexicon.languages.keys()) / 10)
+        if page * 10 >= len(lexicon.languages.keys()):
+            items = list(lexicon.languages.keys())[page * 10:]
+        else:
+            items = list(lexicon.languages.keys())[page * 10: (page + 1) * 10]
     await callback.message.edit_text('''
 Какой язык ?
 ''', reply_markup=inline_language_keyboard_maker(items, page + 1, amount, type))
@@ -416,15 +422,16 @@ async def next_page_lang_command(callback: CallbackQuery):
 @dp.callback_query(F.data.startswith('previous_page_audio_test'), StateFilter(FSMinput.choose_dict))
 @dp.callback_query(F.data.startswith('previous_page_lang'), StateFilter(FSMinput.choose_lang))
 async def previous_page_lang_command(callback: CallbackQuery):
-    amount = ceil(len(lexicon.languages.keys()) / 10)
-
     lst = callback.data.split('_')
     page = int(lst[-1])
     type = lst[2] + '_' + lst[3]
-    if 'audio' in callback.data:
+    if callback.data.startswith('previous_page_audio_test'):
+        amount = ceil(len(lexicon.languages_for_audio.keys()) / 10)
+        items = list(lexicon.languages_for_audio.keys())[(page - 2) * 10: (page - 1) * 10]
         type += '_' + lst[4]
-    items = list(lexicon.languages.keys())[(page - 2) * 10: (page - 1) * 10]
-
+    else:
+        amount = ceil(len(lexicon.languages.keys()) / 10)
+        items = list(lexicon.languages.keys())[(page - 2) * 10: (page - 1) * 10]
     await callback.message.edit_text('''
 Какой язык ?
 ''', reply_markup=inline_language_keyboard_maker(items, page - 1, amount, type))
@@ -614,7 +621,10 @@ async def choose_individual_audio_test_type(callback: CallbackQuery, state: FSMC
 @dp.callback_query(F.data.startswith('audio_test'), StateFilter(FSMinput.test))
 @dp.callback_query(F.data.in_(['phrase_test', 'picture_test']), StateFilter(FSMinput.start_test))
 async def choose_language_for_other_tests_command(callback: CallbackQuery, state: FSMContext):
-    langs = list(lexicon.languages.keys())
+    if callback.data.startswith('audio_test'):
+        langs = list(lexicon.languages_for_audio.keys())
+    else:
+        langs = list(lexicon.languages.keys())
     m = len(langs)
     amount = ceil(m / 10)
     n = m if m < 10 else 10
@@ -780,8 +790,9 @@ async def choose_audio_test_type(callback: CallbackQuery, state: FSMContext):
     audio_file = text_to_audio(info[0][1], language)
 
     await callback.message.delete()
-    await callback.message.answer_audio(audio=FSInputFile(audio_file), caption='''
+    await callback.message.answer_audio(audio=FSInputFile(audio_file), caption=f'''
 Повторите
+Перевод: {info[0][0]}
 ''')
     await state.set_state(FSMinput.audio_test)
     await state.update_data(language=language, info=info, n=n, rating=rating)
@@ -820,7 +831,6 @@ async def audio_test_answering(message: Message, state: FSMContext):
     recognizer = sr.Recognizer()
     user_audio_path = os.path.join(TEMP_PATH, f"{message.message_id}.ogg")
     processed_audio_path = os.path.splitext(user_audio_path)[0] + "_processed.wav"
-
     word = info['info'][info['n']][1]
     audio_file = os.path.join(TEMP_PATH, f"{normalize_text(word)}.mp3")
 
@@ -841,7 +851,7 @@ async def audio_test_answering(message: Message, state: FSMContext):
                 raise Exception(f"Ошибка загрузки файла, статус: {response.status}")
 
     preprocess_audio(user_audio_path, processed_audio_path)
-
+    user_text = ''
     with sr.AudioFile(processed_audio_path) as source:
         audio = recognizer.record(source)
         try:
@@ -852,7 +862,7 @@ async def audio_test_answering(message: Message, state: FSMContext):
 - Отсутствие шума
 - Длительность больше секунды, но меньше пяти
 - Разборчивая речь
-Попробуйте ещё раз.""")
+""")
     original_word = word
 
     if is_similar(user_text, original_word):
@@ -861,9 +871,11 @@ async def audio_test_answering(message: Message, state: FSMContext):
     else:
         await message.reply(f"Не совпадает. Ты сказал: '{user_text}', а должно быть: '{original_word}'.")
 
-    for file_path in [user_audio_path, processed_audio_path]:
-        if os.path.exists(file_path):
-            os.remove(file_path)
+    for path in Path('temp_audio/').glob('*'):
+        if path.is_dir():
+            rmtree(path)
+        else:
+            path.unlink()
 
     info['rating'] += rate
 
@@ -887,7 +899,7 @@ async def audio_test_answering(message: Message, state: FSMContext):
             data = ResultsORM(
                 user_id=user.id,
                 language=info['language'],
-                type_of_tests=4,
+                type_of_tests='4',
                 result=grade,
                 number_of_attempts=1
             )
@@ -907,3 +919,4 @@ async def audio_test_answering(message: Message, state: FSMContext):
 if __name__ == '__main__':
     db_session.global_init('database/langdict.sqlite')
     dp.run_polling(bot)
+    os.remove('audio.mp3')
