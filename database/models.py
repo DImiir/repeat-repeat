@@ -39,7 +39,7 @@ class ResultsORM(SqlAlchemyBase):
     user: Mapped["UserORM"] = relationship(back_populates="statistics")
 
 
-class PhraseInfoORM(SqlAlchemyBase):
+class SystemInfoORM(SqlAlchemyBase):
     __tablename__ = 'phrases'
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

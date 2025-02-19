@@ -4,6 +4,7 @@ from pathlib import Path
 from random import shuffle
 from math import ceil
 from shutil import rmtree
+import time
 
 import aiofiles
 import requests
@@ -26,7 +27,7 @@ from gtts import gTTS
 
 import lexicon
 from database import db_session
-from database.models import UserORM, DictionaryORM, ResultsORM, PhraseInfoORM, PictureInfoORM
+from database.models import UserORM, DictionaryORM, ResultsORM, SystemInfoORM, PictureInfoORM
 from keyboards import (keyboard_menu, inline_language_keyboard_maker, inline_dictionary_keyboard_maker,
                        new_dictionary, inline_words_keyboard_maker, inline_tests_keyboard_maker,
                        inline_word_test_answer_keyboard_maker, inline_word_keyboard_maker,
@@ -34,7 +35,7 @@ from keyboards import (keyboard_menu, inline_language_keyboard_maker, inline_dic
 
 BOT_TOKEN = ''
 API_key = ''
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN, proxy='http://proxyprovider.com:2116')
 dp = Dispatcher()
 
 
@@ -646,13 +647,13 @@ async def word_test_running(callback: CallbackQuery, state: FSMContext):
     data, text = [], ''
     groups = set()
     if type == 'phrase':
-        data = session.query(PhraseInfoORM).all()
+        data = session.query(SystemInfoORM).all()
         text = 'фраз'
     elif type == 'picture':
         data = session.query(PictureInfoORM).all()
         text = 'картинок'
     elif type == 'audio':
-        data = session.query(PhraseInfoORM).all()
+        data = session.query(SystemInfoORM).all()
         text = 'аудио'
         groups.add('0')
     session.close()
@@ -671,21 +672,27 @@ async def picture_test_running(callback: CallbackQuery, state: FSMContext):
     lst = callback.data.split('_')
     language = lst[-1]
     type = lst[0]
-    n, rating, info = 0, 0, []
+    n, rating, info, mistakes = 0, 0, [], []
     session = db_session.create_session()
     data = session.query(PictureInfoORM).filter(PictureInfoORM.group == lst[-2]).all()
     info = [(i.what, translate(i.what, language), i.picture) for i in data]
     shuffle(info)
     info = info[:10]
+    text = '\n'.join([f'{i[0]} - {i[1]}' for i in info])
+    shuffle(info)
     session.close()
     photo_file = FSInputFile(info[0][-1])
+    await callback.message.edit_text(f'''
+{text}
+''')
+    time.sleep(10)
     await callback.message.delete()
     await callback.message.answer(text='Что изображено на картинке ?')
     await callback.message.answer_photo(photo=photo_file,
                                         reply_markup=inline_word_test_answer_keyboard_maker([i[1] for i in info], n,
                                                                                             type))
     await state.set_state(FSMinput.test)
-    await state.update_data(language=language, info=info, n=n, rating=rating)
+    await state.update_data(language=language, info=info, n=n, rating=rating, mistakes=mistakes)
 
 
 @dp.callback_query(F.data.startswith('phrase_test'), StateFilter(FSMinput.test))
@@ -694,7 +701,7 @@ async def word_or_phrase_test_running(callback: CallbackQuery, state: FSMContext
     lst = callback.data.split('_')
     language = lst[-1]
     type = lst[0]
-    n, rating, info = 0, 0, []
+    n, rating, info, mistakes = 0, 0, [], []
     session = db_session.create_session()
     if type == 'word':
         data = session.query(UserORM).filter(UserORM.tg_id == callback.model_dump()['from_user']['id']).one()
@@ -702,16 +709,22 @@ async def word_or_phrase_test_running(callback: CallbackQuery, state: FSMContext
         shuffle(info)
         info = info[:10]
     elif type == 'phrase':
-        data = session.query(PhraseInfoORM).filter(PhraseInfoORM.group == lst[-2]).all()
+        data = session.query(SystemInfoORM).filter(SystemInfoORM.group == lst[-2]).all()
         info = [(i.phrase, translate(i.phrase, language)) for i in data]
         shuffle(info)
         info = info[:10]
+    text = '\n'.join([f'{i[0]} - {i[1]}' for i in info])
+    shuffle(info)
+    await callback.message.edit_text(f'''
+{text}
+''')
+    time.sleep(10)
     await callback.message.edit_text(f'''
 Как переводится это:
 {info[n][0]}
 ''', reply_markup=inline_word_test_answer_keyboard_maker([i[1] for i in info], n, type))
     await state.set_state(FSMinput.test)
-    await state.update_data(language=language, info=info, n=n, rating=rating)
+    await state.update_data(language=language, info=info, n=n, rating=rating, mistakes=mistakes)
     session.close()
 
 
@@ -720,29 +733,43 @@ async def word_or_phrase_test_running(callback: CallbackQuery, state: FSMContext
 @dp.callback_query(F.data.startswith('word_answer'), StateFilter(FSMinput.test))
 async def test_answering(callback: CallbackQuery, state: FSMContext):
     info = await state.get_data()
-    info['n'] += 1
     lst = callback.data.split('_')
     type = {'word': '1', 'phrase': '2', 'picture': '3'}[lst[0]]
 
     if lst[-1] == 'true':
         info['rating'] += 1
+    else:
+        info['mistakes'].append(info['n'])
+
+    if type == '3':
+        await callback.message.edit_caption(caption=f"Правильный ответ:\n{info['info'][info['n']][1]} - {info['info'][info['n']][0]}")
+    else:
+        await callback.message.edit_text(f"Правильный ответ:\n{info['info'][info['n']][1]} - {info['info'][info['n']][0]}")
+    time.sleep(3)
+
+    info['n'] += 1
     grade = calculate_grade(info['rating'])
 
-    await state.update_data(n=info['n'], rating=info['rating'])
+    await state.update_data(n=info['n'], rating=info['rating'], mistakes=info['mistakes'])
 
     if info['n'] == 10:
+        text_mistakes = ''
+        if info['mistakes']:
+            text = '\n'.join([f"{info['info'][i][1]} - {info['info'][i][0]}" for i in info['mistakes']])
+            text_mistakes = f'\nСлучаи, где Вы допустили ошибку:\n{text}'
+
         if type == '3':
             await callback.message.delete()
             await callback.message.answer(text=f'''
 Ты прошёл тест.
 Твой результат: {info['rating']}/10
-Это {grade}
+Это {grade}{text_mistakes}
 ''')
         else:
             await callback.message.edit_text(f'''
 Ты прошёл тест.
 Твой результат: {info['rating']}/10
-Это {grade}
+Это {grade}{text_mistakes}
 ''')
         await callback.answer(reply_markup=keyboard_menu)
 
@@ -783,7 +810,7 @@ async def choose_audio_test_type(callback: CallbackQuery, state: FSMContext):
     language = lst[-1]
     session = db_session.create_session()
     n, rating, info = 0, 0, []
-    data = session.query(PhraseInfoORM).filter(PhraseInfoORM.group == lst[-2]).all()
+    data = session.query(SystemInfoORM).filter(SystemInfoORM.group == lst[-2]).all()
     info = [(i.phrase, translate(i.phrase, language)) for i in data]
     shuffle(info)
     info = info[:10]
@@ -805,7 +832,7 @@ async def audio_test_0_before_answering(callback: CallbackQuery, state: FSMConte
     lst = callback.data.split('_')
     language = lst[-1]
     session = db_session.create_session()
-    n, rating, info = 0, 0, []
+    n, rating, info, mistakes = 0, 0, [], []
     data = session.query(DictionaryORM).filter(DictionaryORM.language == language).all()
     info = [(i.word, i.translated_word) for i in data]
     shuffle(info)
@@ -919,4 +946,3 @@ async def audio_test_answering(message: Message, state: FSMContext):
 if __name__ == '__main__':
     db_session.global_init('database/langdict.sqlite')
     dp.run_polling(bot)
-    os.remove('audio.mp3')
